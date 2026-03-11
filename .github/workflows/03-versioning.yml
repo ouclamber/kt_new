@@ -42,17 +42,22 @@ jobs:
             CURRENT_VERSION="0.1.0"
           fi
           echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT_VERSION"
 
       - name: Determine version bump type
         id: get_type
         run: |
           COMMITS=$(git log ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} --pretty=format:"%s")
+          echo "Commits: $COMMITS"
           if echo "$COMMITS" | grep -qiE "^(feat|feature):"; then
             echo "type=minor" >> $GITHUB_OUTPUT
+            echo "Bump type: minor"
           elif echo "$COMMITS" | grep -qiE "^(fix|hotfix):"; then
             echo "type=patch" >> $GITHUB_OUTPUT
+            echo "Bump type: patch"
           else
             echo "type=patch" >> $GITHUB_OUTPUT
+            echo "Bump type: patch (default)"
           fi
 
       - name: Bump version
@@ -72,38 +77,37 @@ jobs:
           NEW_VERSION="$MAJOR.$MINOR.$PATCH"
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "old_version=$CURRENT" >> $GITHUB_OUTPUT
+          echo "Version bumped: $CURRENT -> $NEW_VERSION ($TYPE)"
 
-      - name: Create version bump PR
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Update VERSION file
         run: |
-          # Создаем новую ветку для обновления версии
-          BRANCH_NAME="version-bump-${{ steps.bump.outputs.new_version }}"
-          git checkout -b $BRANCH_NAME
-          
-          # Обновляем файл версии
           echo "${{ steps.bump.outputs.new_version }}" > VERSION
-          
-          # Коммитим изменения
+          echo "VERSION file updated to: ${{ steps.bump.outputs.new_version }}"
+
+      - name: Commit and push with force lease
+        run: |
           git add VERSION
+          
+          # Проверяем, есть ли изменения
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          
+          # Создаем коммит
           git commit -m "[${{ steps.bump.outputs.new_version }}] <- [${{ steps.bump.outputs.old_version }}] ${{ steps.bump.outputs.version_type }} up"
           
-          # Пушим новую ветку
-          git push origin $BRANCH_NAME
+          # Сначала пытаемся сделать pull с rebase
+          echo "Pulling latest changes with rebase..."
+          git pull --rebase origin ${{ github.event.pull_request.base.ref }} || true
           
-          # Создаем Pull Request
-          gh pr create \
-            --title "Автоматическое обновление версии до ${{ steps.bump.outputs.new_version }}" \
-            --body "Автоматическое обновление версии после мержа PR #${{ github.event.pull_request.number }}
-
-Тип обновления: ${{ steps.bump.outputs.version_type }}
-Старая версия: ${{ steps.bump.outputs.old_version }}
-Новая версия: ${{ steps.bump.outputs.new_version }}
-
-Этот PR создан автоматически для обновления версии." \
-            --base main \
-            --head $BRANCH_NAME \
-            --label "version-update"
+          # Пытаемся запушить с force-with-lease (безопасный force push)
+          echo "Pushing with force-with-lease..."
+          git push --force-with-lease origin HEAD:${{ github.event.pull_request.base.ref }}
+          
+          echo "✅ Successfully pushed version update"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   add-version-label:
     name: "Добавить label с версией"
@@ -127,7 +131,7 @@ jobs:
             console.log(`Adding label: ${labelName} to PR #${context.issue.number}`);
             
             try {
-              // Пытаемся создать метку
+              // Пытаемся создать метку (если уже существует, проигнорируем ошибку)
               await github.rest.issues.createLabel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -147,4 +151,5 @@ jobs:
               console.log(`✅ Successfully added label ${labelName}`);
             } catch (error) {
               console.log(`❌ Error adding label: ${error.message}`);
+              // Не проваливаем задание из-за ошибки с меткой
             }
