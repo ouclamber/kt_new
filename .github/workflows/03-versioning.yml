@@ -1,5 +1,6 @@
 name: "03 - Автоматическое обновление версии"
-
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 on:
   pull_request:
     branches: [main, master]
